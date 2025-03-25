@@ -13,15 +13,8 @@ export namespace Clipboard {
   /**
    * Get the application clipboard instance.
    */
-  export function getInstance(): MimeData {
+  export function getInstance(): IClipboard {
     return Private.instance;
-  }
-
-  /**
-   * Set the application clipboard instance.
-   */
-  export function setInstance(value: MimeData): void {
-    Private.instance = value;
   }
 
   /**
@@ -94,6 +87,27 @@ export namespace Clipboard {
       }
     }
   }
+
+  /**
+   * The interface for the application clipboard.
+   */
+  export interface IClipboard {
+    /**
+     * Retrieve the data for a given mime type.
+     * Returns `null` if the data does not exist.
+     *
+     * @param mime - The mime type to retrieve.
+     */
+    getData(mime: string): Promise<unknown | null>;
+
+    /**
+     * Set the data for a given mime type.
+     *
+     * @param mime - The mime type to set.
+     * @param data - The data to set.
+     */
+    setData(mime: string, data: unknown): Promise<void>;
+  }
 }
 
 /**
@@ -101,7 +115,103 @@ export namespace Clipboard {
  */
 namespace Private {
   /**
+   * The mimetype used for Jupyter cell data.
+   */
+  const JUPYTER_CELL_MIME = 'application/vnd.jupyter.cells';
+
+  /**
+   * An implementation of the clipboard interface.
+   * This uses the native clipboard API when available, with a fallback to
+   * a MimeData instance otherwise - The native clipboard API only works in
+   * secure contexts (pages served over HTTPS or localhost).
+   */
+  class ClipboardImpl implements Clipboard.IClipboard {
+    /**
+     * The fallback clipboard instance.
+     */
+    fallback: MimeData;
+
+    /**
+     * Create a new clipboard instance.
+     */
+    constructor(fallback?: MimeData) {
+      this.fallback = fallback || new MimeData();
+    }
+
+    /**
+     * Retrieve the data for a given mime type.
+     *
+     * @param mime - The mime type to retrieve.
+     * @returns A promise that resolves with the data for the given mime type.
+     */
+    async getData(mime: string): Promise<unknown> {
+      const { systemClipboard } = this;
+      if (!systemClipboard) {
+        console.warn('Clipboard API not available');
+        return this.fallback.getData(mime);
+      }
+      try {
+        const text = await systemClipboard.readText();
+        return this.convertStringToData(mime, text);
+      } catch (reason) {
+        console.warn('Failed to read data from clipboard:', reason);
+        return this.fallback.getData(mime);
+      }
+    }
+
+    /**
+     * Set the data for a given mime type.
+     *
+     * @param mime - The mime type to set.
+     * @param data - The data to set.
+     */
+    async setData(mime: string, data: unknown): Promise<void> {
+      const { systemClipboard } = this;
+      if (!systemClipboard) {
+        console.warn('Clipboard API not available');
+        this.fallback.clear();
+        this.fallback.setData(mime, data);
+        return;
+      }
+      try {
+        await systemClipboard.writeText(this.convertDataToString(mime, data));
+      } catch (reason) {
+        console.warn('Failed to write data to clipboard:', reason);
+        this.fallback.clear();
+        this.fallback.setData(mime, data);
+      }
+    }
+
+    /**
+     * Convert the data to a string for the given mime type.
+     */
+    convertDataToString(mime: string, data: unknown): string {
+      if (mime === JUPYTER_CELL_MIME) {
+        return JSON.stringify(data);
+      }
+      return (data || '').toString();
+    }
+
+    /**
+     * Convert the string to data for the given mime type.
+     */
+    convertStringToData(mime: string, text: string): unknown {
+      if (mime === JUPYTER_CELL_MIME) {
+        return JSON.parse(text);
+      }
+      return text;
+    }
+
+    /**
+     * Get the system clipboard instance.
+     */
+    get systemClipboard() {
+      return navigator.clipboard;
+    }
+  }
+
+  /**
    * The application clipboard instance.
    */
-  export let instance = new MimeData();
+  export let instance = new ClipboardImpl();
 }

@@ -927,6 +927,7 @@ export namespace Commands {
      */
     commands.addCommand(CommandIDs.copy, {
       execute: () => {
+        console.log('copy');
         const widget = tracker.currentWidget?.content;
 
         if (!widget) {
